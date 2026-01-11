@@ -1,0 +1,26 @@
+# Environnements
+env_py310/
+venv/
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Fichiers volumineux/temporaires
+*.zip
+*.rar
+*.7z
+*.log
+*.tmp
+*.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

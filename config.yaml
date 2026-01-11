@@ -1,0 +1,16 @@
+# config.yaml
+folders:
+  input: "data/input"
+  output: "data/output"
+  rendu: "results/rendu"
+  rapport: "results/Rapport"
+
+colors:
+  contour: "#e6194b"
+  doline: "#3cb44b"
+  intersection_points: "#4363d8"
+  line: "#f58231"
+
+map:
+  dpi: 300
+  figsize: [20, 20]
