@@ -1,255 +1,261 @@
 # ===============================================================
-# utils_geotraitement.py – Version consolidée et épurée
+# utils_geotraitement.py
+# TRAITEMENT GPX + LECTURE CONTOUR
 # ===============================================================
-from lxml import etree
+
+import warnings
+warnings.filterwarnings("ignore")
+
+from pathlib import Path
 import os
-import pandas as pd
 import zipfile
-import numpy as np
 import geopandas as gpd
-from shapely.geometry import Point, Polygon, LineString
-from shapely.ops import unary_union
-import matplotlib.pyplot as plt
 import gpxpy
-import xml.etree.ElementTree as ET
-from lxml import etree
+from shapely.geometry import Polygon, Point, LineString
+from shapely.ops import unary_union
+import numpy as np
 from numba import njit
-import streamlit as st
-from utils.lang_helper import get_text
+from lxml import etree
+import pandas as pd
 
-# ---------------------------------------------------------------
-# 🧠 1. Filtrage GPX
-# ---------------------------------------------------------------
-@njit
-def filter_points_numba(elevations, x_retenu):
-    result = []
-    n = len(elevations)
-    for i in range(1, n-1):
-        if elevations[i] >= (elevations[i-1] + x_retenu) and elevations[i] >= (elevations[i+1] + x_retenu):
-            result.append(i)
-    return result
+# ===============================================================
+# BASE DU PROJET
+# ===============================================================
+BASE_DIR = Path(__file__).resolve().parents[1]
 
-def filter_gpx(df):
-    x_values = [1, 0.75, 0.5, 0.25]
-    elevations = df['elevation'].values
-    x_retenu = None
-    for x in x_values:
-        indices = filter_points_numba(elevations, x)
-        result = df.iloc[indices]
-        if len(result) >= len(df) / 500:
-            x_retenu = x
-            break
-    return result, x_retenu
+# ===============================================================
+# VARIABLES CLIENT
+# ===============================================================
+CLIENT_NOM = None
+DOSSIER_CLIENT = None
+DOSSIER_RENDU = None
 
-# ---------------------------------------------------------------
-# 🧠 2. Lecture GPX
-# ---------------------------------------------------------------
-def read_gpx_files(folder_path):
-    all_data = []
-    for filename in os.listdir(folder_path):
-        if filename.lower().endswith(".gpx"):
-            file_path = os.path.join(folder_path, filename)
-            try:
-                with open(file_path, "r", encoding="utf-8", errors="ignore") as file:
-                    gpx_content = file.read()
-                gpx_end_tag_index = gpx_content.rfind("</gpx>")
-                if gpx_end_tag_index != -1:
-                    gpx_content = gpx_content[:gpx_end_tag_index + len("</gpx>")]
-                root = ET.fromstring(gpx_content)
-                namespace = {'default': 'http://www.topografix.com/GPX/1/1'}
-                for wpt in root.findall(".//default:wpt", namespace):
-                    lat = float(wpt.get("lat"))
-                    lon = float(wpt.get("lon"))
-                    ele_element = wpt.find("default:ele", namespace)
-                    ele = float(ele_element.text) if ele_element is not None else 0.0
-                    all_data.append({"latitude": lat, "longitude": lon, "elevation": ele})
-            except Exception:
-                continue
-    return all_data
+# ===============================================================
+# LOGS
+# ===============================================================
+def log_info(msg): print(f"[INFO] {msg}")
+def log_success(msg): print(f"[SUCCESS] {msg}")
+def log_warning(msg): print(f"[WARNING] {msg}")
+def log_error(msg): print(f"[ERROR] {msg}")
 
-# ---------------------------------------------------------------
-# 🧠 3. Traitement GPX et génération shapefiles
-# ---------------------------------------------------------------
-def process_and_plot_gpx(folder_path, output_folder, display_in_streamlit=False):
-    gpx_files = [f for f in os.listdir(folder_path) if f.lower().endswith('.gpx')]
-    if not gpx_files:
-        if display_in_streamlit:
-            st.warning(f"Aucun fichier GPX trouvé dans {folder_path}")
-        return None
+# ===============================================================
+# INITIALISATION CLIENT
+# ===============================================================
+def initialiser_client(client_nom: str):
+    global CLIENT_NOM, DOSSIER_CLIENT, DOSSIER_RENDU
+    CLIENT_NOM = client_nom
+    DOSSIER_CLIENT = BASE_DIR / "data" / "Dossier_clients" / CLIENT_NOM
+    DOSSIER_RENDU = DOSSIER_CLIENT / "RENDU"
 
-    gpx_data = read_gpx_files(folder_path)
-    if not gpx_data:
-        if display_in_streamlit:
-            st.warning(f"Aucun GPX valide trouvé dans {folder_path}")
-        return None
+# ===============================================================
+# DETECTION CLIENT UNIQUE
+# ===============================================================
+def detecter_client_unique():
+    dossier_clients = BASE_DIR / "data" / "Dossier_clients"
+    if not dossier_clients.exists():
+        raise FileNotFoundError("Le dossier data/Dossier_clients est introuvable")
+    sous_dossiers = [d for d in dossier_clients.iterdir() if d.is_dir() and not d.name.startswith(".")]
+    if len(sous_dossiers) == 0:
+        raise ValueError("Aucun dossier client trouvé")
+    if len(sous_dossiers) > 1:
+        noms = [d.name for d in sous_dossiers]
+        raise ValueError(f"Plusieurs dossiers clients détectés {noms}, un seul autorisé")
+    return sous_dossiers[0].name
 
-    points_df = pd.DataFrame(gpx_data)
-    filtered_result, x_retenu = filter_gpx(points_df)
+# ===============================================================
+# LECTURE DU CONTOUR (INPUT)
+# ===============================================================
+def load_contour_from_input():
+    input_dir = DOSSIER_CLIENT / "INPUT"
+    fichiers = [f for f in input_dir.iterdir() if f.suffix.lower() in [".gpx",".kml",".kmz"] and "surface" in f.name.lower()]
+    if not fichiers:
+        fichiers = [f for f in input_dir.iterdir() if f.suffix.lower() in [".gpx",".kml",".kmz"]]
+    if not fichiers:
+        raise FileNotFoundError("Aucun fichier de contour trouvé dans INPUT")
+    file_path = fichiers[0]
 
-    geo_df = gpd.GeoDataFrame(
-        filtered_result,
-        geometry=gpd.points_from_xy(filtered_result.longitude, filtered_result.latitude),
-        crs="EPSG:4326"
-    )
-
-    # Polygone Dolines
-    lower_quartile = np.percentile(points_df['elevation'], 25)
-    filtered_points_lower_quartile = points_df[points_df['elevation'] < lower_quartile]
-    points = filtered_points_lower_quartile[['longitude', 'latitude']].to_numpy()
-    if len(points) < 3:
-        gdf_dolines = gpd.GeoDataFrame(columns=['geometry'], crs="EPSG:4326")
-    else:
-        polygon = Polygon(points)
-        gdf_dolines = gpd.GeoDataFrame(geometry=[polygon], crs="EPSG:4326")
-
-    # Points alignés
-    coords = np.array([[p.x, p.y] for p in geo_df.geometry])
-    n = len(coords)
-    ANGLE_TOL = np.radians(2)
-    aligned_points = set()
-    for i in range(n):
-        xi, yi = coords[i]
-        angles = [(np.arctan2(coords[j][1]-yi, coords[j][0]-xi), j) for j in range(n) if j!=i]
-        angles.sort(key=lambda x: x[0])
-        current_group = [angles[0][1]]
-        current_angle = angles[0][0]
-        for k in range(1, len(angles)):
-            angle_k, idx_k = angles[k]
-            if abs(angle_k - current_angle) <= ANGLE_TOL:
-                current_group.append(idx_k)
-            else:
-                if len(current_group) >= 2:
-                    aligned_points.update([i] + current_group)
-                current_group = [idx_k]
-                current_angle = angle_k
-        if len(current_group) >= 2:
-            aligned_points.update([i] + current_group)
-
-    aligned_points = list(aligned_points)
-    lignes_geometry = [LineString([tuple(coords[i]), tuple(coords[i+1]), tuple(coords[i+2])])
-                       for i in range(len(aligned_points)-2)]
-    lignes_gdf = gpd.GeoDataFrame(geometry=lignes_geometry, crs="EPSG:4326")
-    lignes_gdf = lignes_gdf[~lignes_gdf.geometry.is_empty & lignes_gdf.geometry.notna()]
-
-    # Points d'intersection
-    intersection_points = []
-    for i, l1 in enumerate(lignes_gdf.geometry):
-        for j, l2 in enumerate(lignes_gdf.geometry):
-            if i != j:
-                inter = l1.intersection(l2)
-                if not inter.is_empty:
-                    if inter.geom_type == 'Point':
-                        intersection_points.append(inter)
-                    elif inter.geom_type == 'MultiPoint':
-                        intersection_points.extend(inter.geoms)
-    intersection_gdf = gpd.GeoDataFrame(geometry=intersection_points, crs=lignes_gdf.crs)
-
-    # Visualisation
-    fig, ax = plt.subplots(figsize=(10,8))
-    if not gdf_dolines.empty: gdf_dolines.plot(ax=ax)
-    if not lignes_gdf.empty: lignes_gdf.plot(ax=ax, color='red')
-    if not intersection_gdf.empty: intersection_gdf.plot(ax=ax, color='blue', markersize=40)
-    plt.title("Contour, lignes alignées et intersections")
-    plt.xlabel("Longitude"); plt.ylabel("Latitude")
-    plt.grid(True)
-    output_fig_path = os.path.join(output_folder, "visualisation_gpx.png")
-    plt.savefig(output_fig_path, dpi=150, bbox_inches='tight')
-    plt.close(fig)
-    if display_in_streamlit:
-        st.image(output_fig_path, caption="Visualisation GPX", width=700)
-
-    # Sauvegarde shapefiles
-    for gdf, name in zip([gdf_dolines, lignes_gdf, intersection_gdf],
-                         ['output_dolines', 'output_lines', 'output_intersection_points']):
-        if not gdf.empty:
-            if gdf.crs is None:
-                gdf.set_crs(epsg=4326, inplace=True)
-            gdf.to_file(os.path.join(output_folder, f"{name}.shp"))
-
-    return {
-        "doline": gdf_dolines,
-        "lines": lignes_gdf,
-        "intersections": intersection_gdf
-    }
-
-# ---------------------------------------------------------------
-# 🔹 Charger contour GPX/KML/KMZ
-# ---------------------------------------------------------------
-def load_contour_from_file(file_path):
-    ext = file_path.split('.')[-1].lower()
-    if ext=='gpx':
-        with open(file_path,'r',encoding='utf-8') as f:
+    ext = file_path.suffix.lower()
+    if ext == ".gpx":
+        with open(file_path, "r", encoding="utf-8") as f:
             gpx = gpxpy.parse(f)
-        points=[(pt.longitude,pt.latitude)
-                for track in gpx.tracks
-                for segment in track.segments
-                for pt in segment.points]
-        if len(points)<3:
-            raise ValueError("Pas assez de points pour créer un polygone")
+        points = [(pt.longitude, pt.latitude)
+                  for track in gpx.tracks
+                  for seg in track.segments
+                  for pt in seg.points]
+        if len(points) < 3:
+            raise ValueError("Pas assez de points pour créer le polygone")
         return Polygon(points)
-    elif ext in ['kml','kmz']:
-        if ext=='kmz':
-            with zipfile.ZipFile(file_path,'r') as z:
-                kml_bytes=None
+    elif ext in [".kml",".kmz"]:
+        if ext == ".kmz":
+            with zipfile.ZipFile(file_path,"r") as z:
+                kml_bytes = None
                 for name in z.namelist():
-                    if name.endswith('.kml'):
-                        kml_bytes=z.read(name)
+                    if name.endswith(".kml"):
+                        kml_bytes = z.read(name)
                         break
                 if kml_bytes is None:
-                    raise ValueError("Aucun KML trouvé dans le KMZ.")
+                    raise ValueError("Aucun KML trouvé dans KMZ")
         else:
-            with open(file_path,'rb') as f:
-                kml_bytes=f.read()
-        root=etree.fromstring(kml_bytes)
-        ns={'kml':'http://www.opengis.net/kml/2.2'}
-        polygons=[]
-        for placemark in root.xpath('.//kml:Placemark',namespaces=ns):
-            for polygon_elem in placemark.xpath('.//kml:Polygon',namespaces=ns):
-                coords_text=polygon_elem.xpath('.//kml:coordinates/text()',namespaces=ns)
+            with open(file_path,"rb") as f:
+                kml_bytes = f.read()
+        root = etree.fromstring(kml_bytes)
+        ns = {"kml":"http://www.opengis.net/kml/2.2"}
+        polygons = []
+        for placemark in root.xpath(".//kml:Placemark",namespaces=ns):
+            for poly_elem in placemark.xpath(".//kml:Polygon",namespaces=ns):
+                coords_text = poly_elem.xpath(".//kml:coordinates/text()",namespaces=ns)
                 for c in coords_text:
-                    coords=[(float(lon),float(lat)) for lon,lat,*_ in (p.split(',') for p in c.strip().split())]
-                    if len(coords)>=3:
-                        polygons.append(Polygon(coords))
-            for ring_elem in placemark.xpath('.//kml:LinearRing',namespaces=ns):
-                coords_text=ring_elem.xpath('.//kml:coordinates/text()',namespaces=ns)
-                for c in coords_text:
-                    coords=[(float(lon),float(lat)) for lon,lat,*_ in (p.split(',') for p in c.strip().split())]
+                    coords = [(float(lon),float(lat)) for lon,lat,*_ in (p.split(",") for p in c.strip().split())]
                     if len(coords)>=3:
                         polygons.append(Polygon(coords))
         if not polygons:
-            raise ValueError(f"Aucun polygone trouvé dans {file_path}")
-        return unary_union(polygons) if len(polygons)>1 else polygons[0]
+            raise ValueError("Aucun polygone trouvé dans le KML/KMZ")
+        valid_polys = [p.buffer(0) if not p.is_valid else p for p in polygons]
+        return unary_union(valid_polys) if len(valid_polys)>1 else valid_polys[0]
     else:
-        raise ValueError("Format non supporté (GPX/KML/KMZ)")
+        raise ValueError("Format non supporté")
 
-# ---------------------------------------------------------------
-# 🔹 Filtrer points d'intersection selon doline et parcelle
-# ---------------------------------------------------------------
-def filter_intersection_points(intersection_gdf, doline_gdf, parcelle_polygon):
-    if doline_gdf.empty or intersection_gdf.empty:
-        return gpd.GeoDataFrame(columns=["geometry"], crs=intersection_gdf.crs), \
-               gpd.GeoDataFrame(columns=["geometry"], crs=intersection_gdf.crs)
+# ===============================================================
+# LECTURE GPX POUR LIGNES ET POINTS
+# ===============================================================
+def lire_gpx_points(fichier):
+    points=[]
+    try:
+        with open(fichier,"r",encoding="utf-8",errors="ignore") as f:
+            gpx = gpxpy.parse(f)
+        for wpt in gpx.waypoints:
+            points.append({"lat":wpt.latitude,"lon":wpt.longitude,"ele":wpt.elevation or 0.0})
+        for trk in gpx.tracks:
+            for seg in trk.segments:
+                for pt in seg.points:
+                    points.append({"lat":pt.latitude,"lon":pt.longitude,"ele":pt.elevation or 0.0})
+    except Exception as e:
+        log_error(f"Erreur lecture {fichier.name}: {e}")
+    return points
 
-    doline_contour = doline_gdf.unary_union.convex_hull
+def trouver_fichiers_gpx_convertir():
+    convert_dir = DOSSIER_CLIENT / "OUTPUT" / "Convertir"
+    if not convert_dir.exists():
+        log_warning("Dossier Convertir inexistant")
+        return []
+    return sorted(convert_dir.glob("*.gpx"))
 
-    pts_inside_both = []
-    pts_inside_parcelle_only = []
+# ===============================================================
+# CALCULS LIGNES / INTERSECTIONS / DOLINES
+# ===============================================================
+@njit
+def filter_points_numba(elev,x):
+    res=[]
+    for i in range(1,len(elev)-1):
+        if elev[i]>=elev[i-1]+x and elev[i]>=elev[i+1]+x:
+            res.append(i)
+    return res
 
-    for _, row in intersection_gdf.iterrows():
-        geom = row.geometry
-        if geom.within(doline_contour) and geom.within(parcelle_polygon):
-            pts_inside_both.append(geom)
-        elif geom.within(parcelle_polygon):
-            pts_inside_parcelle_only.append(geom)
+def filter_gpx(df):
+    if len(df)<3: return df,0
+    seuils=[1,0.75,0.5,0.25]
+    elev=df["ele"].values
+    for s in seuils:
+        idx=filter_points_numba(elev,s)
+        if len(idx)>=len(df)/500: return df.iloc[idx],s
+    return df.iloc[filter_points_numba(elev,seuils[-1])],seuils[-1]
 
-    def create_geodf(points, crs):
-        if not points:
-            return gpd.GeoDataFrame(columns=["geometry"], crs=crs)
-        df = pd.DataFrame(points, columns=["geometry"])
-        gdf = gpd.GeoDataFrame(df, geometry="geometry", crs=crs)
-        return gdf[gdf.geometry.notna() & gdf.geometry.is_valid]
+def extraire_lignes_alignees(coords):
+    if len(coords)<3: return [],[]
+    ANGLE_TOL=np.radians(2)
+    aligns=set()
+    for i,(xi,yi) in enumerate(coords):
+        angles=[]
+        for j,(xj,yj) in enumerate(coords):
+            if i!=j: angles.append((np.arctan2(yj-yi,xj-xi),j))
+        angles.sort()
+        groupe=[angles[0][1]]
+        ref=angles[0][0]
+        for a,j in angles[1:]:
+            if abs(a-ref)<=ANGLE_TOL:
+                groupe.append(j)
+            else:
+                if len(groupe)>=2: aligns.update([i]+groupe)
+                groupe=[j]
+                ref=a
+        if len(groupe)>=2: aligns.update([i]+groupe)
+    idx=sorted(list(aligns))
+    lignes=[]
+    for i in range(len(idx)-2):
+        lignes.append(LineString([coords[idx[i]],coords[idx[i+1]],coords[idx[i+2]]]))
+    return lignes,idx
 
-    gdf_both = create_geodf(pts_inside_both, intersection_gdf.crs)
-    gdf_parcelle = create_geodf(pts_inside_parcelle_only, intersection_gdf.crs)
+def calculer_intersections(lignes):
+    inters=[]
+    for i in range(len(lignes)):
+        for j in range(i+1,len(lignes)):
+            inter=lignes[i].intersection(lignes[j])
+            if not inter.is_empty:
+                if inter.geom_type=="Point": inters.append(inter)
+                elif inter.geom_type=="MultiPoint": inters.extend(inter.geoms)
+    return inters
 
-    return gdf_both, gdf_parcelle
+def calculer_dolines(df):
+    if len(df)<10: return None
+    q=np.percentile(df["ele"],25)
+    pts=df[df["ele"]<q]
+    if len(pts)<3: return None
+    coords=pts[["lon","lat"]].values
+    return Polygon(coords).convex_hull
+
+# ===============================================================
+# TRAITEMENT COMPLET
+# ===============================================================
+def traiter_complet():
+    contour=load_contour_from_input()
+    fichiers_gpx=trouver_fichiers_gpx_convertir()
+    if not fichiers_gpx: log_warning("Aucun GPX pour lignes/points")
+    df_pts=[]
+    for f in fichiers_gpx:
+        df_pts.extend(lire_gpx_points(f))
+    df=pd.DataFrame(df_pts)
+    lignes, inters, dolines=[],[],None
+    if not df.empty:
+        filtres, seuil=filter_gpx(df)
+        coords=filtres[["lon","lat"]].values
+        lignes,_=extraire_lignes_alignees(coords)
+        inters=calculer_intersections(lignes)
+        dolines=calculer_dolines(df)
+    return {"contour":contour,"lignes":lignes,"intersections":inters,"dolines":dolines}
+
+# ===============================================================
+# EXPORT SHAPEFILES
+# ===============================================================
+def exporter_resultats(resultats):
+    DOSSIER_RENDU.mkdir(parents=True,exist_ok=True)
+    gpd.GeoDataFrame(geometry=[resultats["contour"]],crs="EPSG:4326").to_file(DOSSIER_RENDU/"CONTOUR.shp")
+    if resultats["lignes"]: gpd.GeoDataFrame(geometry=resultats["lignes"],crs="EPSG:4326").to_file(DOSSIER_RENDU/"LIGNES.shp")
+    if resultats["intersections"]: gpd.GeoDataFrame(geometry=resultats["intersections"],crs="EPSG:4326").to_file(DOSSIER_RENDU/"INTERSECTIONS.shp")
+    if resultats["dolines"]: gpd.GeoDataFrame(geometry=[resultats["dolines"]],crs="EPSG:4326").to_file(DOSSIER_RENDU/"DOLINES.shp")
+
+# ===============================================================
+# STREAMLIT – AUTOMATIQUE AU LANCEMENT
+# ===============================================================
+if __name__ == "__main__":
+    import streamlit as st
+    st.set_page_config(page_title="Ground Water Finder", layout="wide")
+    st.title("💧 Ground Water Finder – Traitement GPX/Contour")
+
+    try:
+        client_nom = detecter_client_unique()
+        st.info(f"📁 Client détecté automatiquement : **{client_nom}**")
+        initialiser_client(client_nom)
+
+        with st.spinner("Traitement automatique en cours..."):
+            resultats = traiter_complet()
+            exporter_resultats(resultats)
+
+        st.success("✅ Traitement terminé")
+        st.json({
+            "lignes": len(resultats["lignes"]),
+            "intersections": len(resultats["intersections"]),
+            "dolines": bool(resultats["dolines"])
+        })
+
+    except Exception as e:
+        st.error(str(e))

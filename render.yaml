@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: streamlit-gpx
+    env: docker
+    dockerfilePath: ./Dockerfile  # Utilise VOTRE Dockerfile
+    plan: free
+    autoDeploy: true
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: 1
+    # Render définit automatiquement PORT=10000
+    # Votre CMD avec ${PORT:-8501} fera le reste

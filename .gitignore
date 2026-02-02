@@ -1,51 +1,26 @@
-<<<<<<< HEAD
-# Environnements
+# Fichiers Python compilés
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environnements virtuels
 env_py310/
 venv/
-.env
+.env/   # Si ton .env est dans un dossier
+.env    # fichier .env contenant les secrets
 
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
+# IDE / éditeurs
+.vscode/
+.idea/
 
-# Fichiers volumineux/temporaires
-*.zip
-*.rar
-*.7z
-*.log
-*.tmp
-*.db
-
-# OS
+# Fichiers système
 .DS_Store
 Thumbs.db
 
-# IDE
-.vscode/
-.idea/
-=======
-### AL ###
-#Template for AL projects for Dynamics 365 Business Central
-#launch.json folder
-.vscode/
-#Cache folder
-.alcache/
-#Symbols folder
-.alpackages/
-#Snapshots folder
-.snapshots/
-#Testing Output folder
-.output/
-#Extension App-file
-*.app
-#Rapid Application Development File
-rad.json
-#Translation Base-file
-*.g.xlf
-#License-file
-*.flf
-#Test results file
-TestResults.xml
->>>>>>> f7e5f318d4f018665dd147442ca94c90192df762
+# Logs et fichiers temporaires
+*.log
+*.tmp
+*.bak
+
+# Streamlit
+.streamlit/
