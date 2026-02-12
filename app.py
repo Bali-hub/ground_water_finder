@@ -5,99 +5,220 @@ import os
 import shutil
 import time
 from datetime import datetime
+import warnings
+from pathlib import Path
 
-# Configuration de la page
+warnings.filterwarnings("ignore")
+
 st.set_page_config(
     page_title="🌍 Ground Water Finder",
     page_icon="🌍",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed",
+    menu_items={
+        "Get Help": "mailto:m2techsecretariat@gmail.com",
+        "Report a bug": "mailto:m2techsecretariat@gmail.com",
+        "About": "Ground Water Finder - Analyse géospatiale des eaux souterraines",
+    },
 )
 
-# Initialisation de l'état
-if "setup_finished" not in st.session_state:
-    st.session_state["setup_finished"] = False
-if "current_step" not in st.session_state:
-    st.session_state["current_step"] = "setup"
-if "processing_started" not in st.session_state:
-    st.session_state["processing_started"] = False
-if "processing_complete" not in st.session_state:
-    st.session_state["processing_complete"] = False
+# ============================================
+# DOSSIERS FIXES – COHÉRENTS AVEC LES VOLUMES
+# ============================================
+BASE_CLIENTS = "/app/data/Dossier_clients"  # ← point de montage du volume
+TEMP_DIR = os.path.join(
+    os.path.expanduser("~"), "temp_cartes"
+)  # /home/appuser/temp_cartes
+os.makedirs(TEMP_DIR, exist_ok=True)
 
 # ============================================
-# ÉTAPE 1: SETUP (obligatoire en premier)
+# CSS RESPONSIVE – RECOPIEZ ICI VOTRE CODE CSS COMPLET
 # ============================================
-if not st.session_state["setup_finished"]:
+st.markdown(
+    """
+<style>
+    /* INSÉREZ L'INTÉGRALITÉ DE VOTRE CSS */
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
+# ============================================
+# FONCTIONS UTILITAIRES
+# ============================================
+def nettoyer_avant_demarrage():
+    """NETTOYAGE AU DÉMARRAGE DU CONTENEUR – supprime TOUS les anciens dossiers clients."""
+    print("🧹 Nettoyage avant démarrage...")
+
+    # Créer le dossier parent si nécessaire
+    os.makedirs(BASE_CLIENTS, exist_ok=True)
+
+    # 1️⃣ Supprimer tous les sous-dossiers clients
+    for item in os.listdir(BASE_CLIENTS):
+        item_path = os.path.join(BASE_CLIENTS, item)
+        if os.path.isdir(item_path):
+            try:
+                shutil.rmtree(item_path)
+                print(f"✅ Dossier client supprimé: {item_path}")
+            except Exception as e:
+                print(f"⚠️ Impossible de supprimer {item_path}: {e}")
+
+    # 2️⃣ Nettoyer les dossiers temporaires
+    dossiers_temp = [TEMP_DIR, "./temp_maps", "./data/Dossier_clients/temp"]
+    for dossier in dossiers_temp:
+        if os.path.exists(dossier):
+            try:
+                shutil.rmtree(dossier)
+                print(f"✅ Nettoyé: {dossier}")
+            except Exception as e:
+                print(f"⚠️ Impossible de nettoyer {dossier}: {e}")
+
+    # 3️⃣ Supprimer les fichiers .zip et anciennes cartes
+    fichiers_patterns = [
+        os.path.join(BASE_CLIENTS, "*.zip"),
+        "*.zip",
+        os.path.join(TEMP_DIR, "*.png"),
+    ]
+    import glob
+
+    for pattern in fichiers_patterns:
+        for fichier in glob.glob(pattern):
+            try:
+                os.remove(fichier)
+                print(f"✅ Supprimé: {fichier}")
+            except:
+                pass
+
+
+def nettoyer_apres_traitement(nom_client):
+    """NETTOYAGE APRÈS UPLOAD RÉUSSI – supprime le dossier client et les ZIP, garde la carte."""
+    print(f"🧹 Nettoyage après traitement pour {nom_client}...")
+
+    # Supprimer le dossier client spécifique
+    dossier_client = os.path.join(BASE_CLIENTS, nom_client)
+    if os.path.exists(dossier_client):
+        try:
+            shutil.rmtree(dossier_client)
+            print(f"✅ Dossier client supprimé: {dossier_client}")
+        except Exception as e:
+            print(f"⚠️ Impossible de supprimer {dossier_client}: {e}")
+
+    # Supprimer les fichiers .zip résiduels dans BASE_CLIENTS
+    import glob
+
+    for zip_file in glob.glob(os.path.join(BASE_CLIENTS, "*.zip")):
+        try:
+            os.remove(zip_file)
+            print(f"✅ ZIP supprimé: {zip_file}")
+        except:
+            pass
+
+
+def executer_etape(description, fonction, *args):
+    try:
+        st.info(f"⏳ {description}...")
+        result = fonction(*args)
+        st.success(f"✅ {description} terminé")
+        return result
+    except Exception as e:
+        st.error(f"❌ Erreur {description}: {str(e)[:100]}")
+        raise
+
+
+# ============================================
+# INITIALISATION DE L'ÉTAT – NETTOYAGE AU DÉMARRAGE DU CONTENEUR
+# ============================================
+if "etat_application" not in st.session_state:
+    st.session_state.etat_application = {
+        "setup_fini": False,
+        "traitement_en_cours": False,
+        "traitement_termine": False,
+        "etape_actuelle": 0,
+        "nom_client": None,
+        "carte_sauvegardee": None,
+        "erreur": None,
+        "demarrage_time": datetime.now(),
+        "mail_message": None,
+    }
+    # 🔥 NETTOYAGE OBLIGATOIRE À CHAQUE DÉMARRAGE DU CONTENEUR
+    nettoyer_avant_demarrage()
+
+# ============================================
+# ÉTAPE 1: SETUP
+# ============================================
+if not st.session_state.etat_application["setup_fini"]:
     st.title("🌍 Ground Water Finder - Configuration")
-    
-    from utils.utils_setup import create_streamlit_app
-    
-    # Votre code original exactement
-    create_streamlit_app()
-    
-    # Si on arrive ici, utils_setup a TERMINÉ
-    st.session_state["setup_finished"] = True
-    st.session_state["current_step"] = "processing"
-    st.session_state["processing_started"] = True
-    st.rerun()
+    try:
+        if st.query_params.get("mobile", "false") == "true":
+            st.markdown(
+                """<div class="info-box">📱 Version Mobile<br>Pour une meilleure expérience, utilisez le mode paysage.</div>""",
+                unsafe_allow_html=True,
+            )
+    except:
+        pass
+
+    try:
+        from utils.utils_setup import create_streamlit_app
+
+        create_streamlit_app()
+        st.session_state.etat_application["setup_fini"] = True
+        st.session_state.etat_application["traitement_en_cours"] = True
+        st.rerun()
+    except Exception as e:
+        st.error(f"❌ Erreur configuration: {e}")
+        st.stop()
 
 # ============================================
-# TRAITEMENT AUTOMATIQUE COMPLET
+# ÉTAPE 2: TRAITEMENT COMPLET + AFFICHAGE FINAL
 # ============================================
-elif st.session_state["processing_started"] and not st.session_state["processing_complete"]:
+elif (
+    st.session_state.etat_application["traitement_en_cours"]
+    and not st.session_state.etat_application["traitement_termine"]
+):
     st.title("🌍 Ground Water Finder - Traitement en cours")
-    
-    # Barre de progression
     progress_bar = st.progress(0)
     status_text = st.empty()
-    
-    # Variable pour stocker le nom du client
     nom_client = None
-    
-    # Étape 1: Scan satellites
-    status_text.text("🛰️ Étape 1/4 : Scan satellites...")
-    progress_bar.progress(25)
-    
+
     try:
-        from utils.utils_browser import process_all_gpx
-        
-        if sys.platform == "win32":
-            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        
-        asyncio.run(process_all_gpx())
-        st.success("✅ Scan satellites terminé")
-    except Exception as e:
-        st.error(f"❌ Erreur scan satellites: {e}")
-        st.stop()
-    
-    # Étape 2: Traitement géospatial
-    status_text.text("🗺️ Étape 2/4 : Traitement géospatial...")
-    progress_bar.progress(50)
-    
-    try:
-        from utils import utils_geotraitement as geo
-        
-        # Détection automatique du client
-        nom_client = geo.detecter_client_unique()
-        
-        # Initialisation du client
-        geo.initialiser_client(nom_client)
-        
-        # Traitement
-        resultats = geo.traiter_complet()
-        geo.exporter_resultats(resultats)
-        st.success("✅ Traitement géospatial terminé")
-    except Exception as e:
-        st.error(f"❌ Erreur traitement géospatial: {e}")
-        st.stop()
-    
-    # Étape 3: Export - Utiliser utils_export pour créer le ZIP complet
-    status_text.text("📊 Étape 3/4 : Export des résultats...")
-    progress_bar.progress(75)
-    
-    try:
-        # Sauvegarder le nom du client et le message
-        st.session_state["nom_client"] = nom_client
-        st.session_state["mail_message"] = """### ℹ️ Information importante
+        # ----- ÉTAPE 1: SCAN SATELLITES -----
+        status_text.text("🛰️ Étape 1/4 : Scan satellites...")
+        progress_bar.progress(25)
+        executer_etape(
+            "Scan satellites",
+            lambda: asyncio.run(
+                (
+                    lambda: (
+                        asyncio.set_event_loop_policy(
+                            asyncio.WindowsSelectorEventLoopPolicy()
+                        )
+                        if sys.platform == "win32"
+                        else None
+                    ),
+                    __import__("utils.utils_browser").utils_browser.process_all_gpx(),
+                )[1]
+            ),
+        )
+
+        # ----- ÉTAPE 2: TRAITEMENT GÉOSPATIAL -----
+        status_text.text("🗺️ Étape 2/4 : Traitement géospatial...")
+        progress_bar.progress(50)
+
+        geo = __import__("utils.utils_geotraitement", fromlist=[""])
+        nom_client = executer_etape("Détection du client", geo.detecter_client_unique)
+        executer_etape("Initialisation client", geo.initialiser_client, nom_client)
+        resultats = executer_etape("Traitement géospatial", geo.traiter_complet)
+        executer_etape("Export géospatial", geo.exporter_resultats, resultats)
+        st.session_state.etat_application["nom_client"] = nom_client
+
+        # ----- ÉTAPE 3: EXPORT -----
+        status_text.text("📊 Étape 3/4 : Export des résultats...")
+        progress_bar.progress(75)
+
+        st.session_state.etat_application[
+            "mail_message"
+        ] = """### ℹ️ Information importante
 
 L'obtention du rapport complet est disponible sur demande
 en écrivant à :
@@ -105,146 +226,127 @@ en écrivant à :
 📧 **m2techsecretariat@gmail.com**
 
 _Vous recevrez le rapport détaillé avec toutes les analyses géospatiales._"""
-        
-        # Créer un dossier temporaire pour la carte
-        temp_dir = "./temp_cartes"
+
+        temp_dir = TEMP_DIR
         os.makedirs(temp_dir, exist_ok=True)
-        
-        # Capturer la sortie de utils_export
+
         import io
         from contextlib import redirect_stdout, redirect_stderr
-        
+
         output_buffer = io.StringIO()
-        
         with redirect_stdout(output_buffer), redirect_stderr(output_buffer):
             from utils import utils_export
+
             utils_export.main()
-        
-        # Récupérer le chemin de la carte créée par utils_export
-        BASE_CLIENTS = "./data/Dossier_clients"
+
         dossier_client = os.path.join(BASE_CLIENTS, nom_client)
         dossier_RENDU = os.path.join(dossier_client, "RENDU")
         rapport_dir = os.path.join(dossier_RENDU, f"Rapport_{nom_client}")
         carte_source = os.path.join(rapport_dir, "carte_prospection.png")
-        
+
         if os.path.exists(carte_source):
-            # Copier la carte vers le dossier temporaire
             carte_dest = os.path.join(temp_dir, f"carte_{nom_client}.png")
             shutil.copy2(carte_source, carte_dest)
-            st.session_state["carte_sauvegardee"] = carte_dest
+            st.session_state.etat_application["carte_sauvegardee"] = carte_dest
             st.success("✅ Export terminé - ZIP complet créé avec utils_export")
         else:
-            # Fallback: créer une carte simple
+            import matplotlib
+
+            matplotlib.use("Agg")
             import matplotlib.pyplot as plt
+
             fig, ax = plt.subplots(figsize=(10, 8))
-            ax.text(0.5, 0.5, f"Carte de prospection - {nom_client}\n\nLe rapport complet est dans le ZIP", 
-                   ha='center', va='center', fontsize=16, transform=ax.transAxes)
+            ax.text(
+                0.5,
+                0.5,
+                f"Carte de prospection - {nom_client}\n\nLe rapport complet est dans le ZIP",
+                ha="center",
+                va="center",
+                fontsize=16,
+                transform=ax.transAxes,
+            )
             ax.set_axis_off()
             carte_dest = os.path.join(temp_dir, f"carte_{nom_client}.png")
-            fig.savefig(carte_dest, dpi=150, bbox_inches='tight')
+            fig.savefig(carte_dest, dpi=150, bbox_inches="tight")
             plt.close(fig)
-            st.session_state["carte_sauvegardee"] = carte_dest
+            st.session_state.etat_application["carte_sauvegardee"] = carte_dest
             st.success("✅ Export terminé - ZIP créé (carte simplifiée)")
-        
-    except Exception as e:
-        st.error(f"❌ Erreur export: {e}")
-        st.stop()
-    
-    # Étape 4: Upload B2
-    status_text.text("☁️ Étape 4/4 : Upload vers Backblaze B2...")
-    progress_bar.progress(100)
-    
-    try:
-        # Attendre un peu pour être sûr que le ZIP est créé
+
+        # ----- ÉTAPE 4: UPLOAD B2 -----
+        status_text.text("☁️ Étape 4/4 : Upload vers Backblaze B2...")
+        progress_bar.progress(100)
         time.sleep(2)
-        
-        # Upload avec suppression du dossier
+
         from utils.utils_upload_b2 import main as upload_main
+
         results = upload_main(delete_folder=True)
-        
+
         if results:
-            success_count = sum(1 for r in results if r.get('success', False))
-            st.success(f"✅ {success_count}/{len(results)} fichier(s) uploadé(s) vers B2")
+            success_count = sum(1 for r in results if r.get("success", False))
+            st.success(
+                f"✅ {success_count}/{len(results)} fichier(s) uploadé(s) vers B2"
+            )
+
+            # 🔥 NETTOYAGE APRÈS UPLOAD RÉUSSI (dossier client supprimé, carte conservée)
+            if success_count > 0:
+                nettoyer_apres_traitement(nom_client)
         else:
             st.warning("⚠️ Aucun résultat d'upload")
-            
-    except Exception as e:
-        st.error(f"❌ Erreur upload B2: {e}")
-    
-    # Marquer le traitement comme terminé
-    st.session_state["processing_complete"] = True
-    st.rerun()
 
-# ============================================
-# AFFICHAGE FINAL (après traitement complet)
-# ============================================
-elif st.session_state["processing_complete"]:
-    st.title("🗺️ Carte de prospection – Affichage complet")
-    
-    # Vérifier si la carte a été sauvegardée
-    if "carte_sauvegardee" in st.session_state and os.path.exists(st.session_state["carte_sauvegardee"]):
-        try:
-            # Afficher la carte sauvegardée
-            import matplotlib.pyplot as plt
-            import matplotlib.image as mpimg
-            
-            fig, ax = plt.subplots(figsize=(14, 12))
-            img = mpimg.imread(st.session_state["carte_sauvegardee"])
-            ax.imshow(img)
-            ax.set_axis_off()
-            ax.set_title(f"🗺️ Carte de prospection – Projet {st.session_state.get('nom_client', 'Client')}", 
-                        fontsize=18, weight='bold')
-            plt.tight_layout()
-            st.pyplot(fig)
-            plt.close(fig)
-            
-            # Afficher le message
-            st.markdown("---")
-            st.success("🎉 **Traitement complet terminé avec succès ! Le dossier client a été supprimé après l'upload.**")
-            
-            # Afficher le message mail depuis la session
-            mail_message = st.session_state.get("mail_message", """### ℹ️ Information importante
+        # ✅ TRAITEMENT TERMINÉ – AFFICHAGE DIRECT
+        st.session_state.etat_application["traitement_termine"] = True
+        st.session_state.etat_application["traitement_en_cours"] = False
 
-L'obtention du rapport complet est disponible sur demande
-en écrivant à :
+        # ----- AFFICHAGE FINAL DE LA CARTE (base64) -----
+        st.title("🗺️ Carte de prospection")
+        carte_path = st.session_state.etat_application.get("carte_sauvegardee")
 
-📧 **m2techsecretariat@gmail.com**
-
-_Vous recevrez le rapport détaillé avec toutes les analyses géospatiales._""")
-            
-            st.markdown(mail_message)
-            
-            # Nettoyer le fichier temporaire après affichage
+        if carte_path and os.path.exists(carte_path):
             try:
-                os.remove(st.session_state["carte_sauvegardee"])
-                # Nettoyer le dossier temp s'il est vide
-                temp_dir = "./temp_cartes"
-                if os.path.exists(temp_dir) and not os.listdir(temp_dir):
-                    os.rmdir(temp_dir)
-            except:
-                pass
-                
-        except Exception as e:
-            st.error(f"❌ Erreur d'affichage de la carte: {e}")
-            # Afficher quand même le message
-            st.markdown("---")
-            st.success("🎉 **Traitement complet terminé avec succès !**")
-            st.markdown(st.session_state.get("mail_message", "📧 m2techsecretariat@gmail.com"))
-    else:
-        # Fallback si la carte n'est pas sauvegardée
+                import base64
+
+                with open(carte_path, "rb") as f:
+                    img_b64 = base64.b64encode(f.read()).decode()
+                st.markdown(
+                    f'<img src="data:image/png;base64,{img_b64}" style="width:100%; max-width:1200px; display:block; margin:auto; border:1px solid #ddd; border-radius:8px;">',
+                    unsafe_allow_html=True,
+                )
+                st.success("🎉 **Traitement complet terminé avec succès !**")
+            except Exception as e:
+                st.error(f"❌ Erreur affichage : {e}")
+        else:
+            st.error("⛔ La carte n'a pas été trouvée.")
+
         st.markdown("---")
-        st.success("🎉 **Traitement complet terminé avec succès ! Le dossier client a été supprimé après l'upload.**")
-        
-        mail_message = """### ℹ️ Information importante
+        st.markdown(st.session_state.etat_application["mail_message"])
 
-L'obtention du rapport complet est disponible sur demande
-en écrivant à :
+    except Exception as e:
+        st.error(f"❌ Erreur traitement: {e}")
+        st.session_state.etat_application["erreur"] = str(e)
 
-📧 **m2techsecretariat@gmail.com**
+# ============================================
+# ÉTAT FINAL (rafraîchissement de la page)
+# ============================================
+elif st.session_state.etat_application["traitement_termine"]:
+    st.title("🗺️ Carte de prospection")
+    carte_path = st.session_state.etat_application.get("carte_sauvegardee")
+    if carte_path and os.path.exists(carte_path):
+        try:
+            import base64
 
-_Vous recevrez le rapport détaillé avec toutes les analyses géospatiales._"""
-        
-        st.markdown(mail_message)
+            with open(carte_path, "rb") as f:
+                img_b64 = base64.b64encode(f.read()).decode()
+            st.markdown(
+                f'<img src="data:image/png;base64,{img_b64}" style="width:100%; max-width:1200px; display:block; margin:auto; border:1px solid #ddd; border-radius:8px;">',
+                unsafe_allow_html=True,
+            )
+            st.success("🎉 **Traitement complet terminé avec succès !**")
+        except Exception as e:
+            st.error(f"❌ Erreur affichage : {e}")
+    else:
+        st.error("⛔ La carte n'a pas été trouvée.")
+    st.markdown("---")
+    st.markdown(st.session_state.etat_application.get("mail_message", ""))
 
 # ============================================
 # PIED DE PAGE

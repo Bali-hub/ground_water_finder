@@ -24,8 +24,15 @@ LAST_CLIENT_DIR = sorted(subdirs, key=lambda d: d.stat().st_ctime, reverse=True)
 BASE_DIR = LAST_CLIENT_DIR / "OUTPUT" / "A_convertir"
 CONVERT_DIR = LAST_CLIENT_DIR / "OUTPUT" / "Convertir"
 
-# Chemin FIXE pour Chrome dans Docker (supprime la logique conditionnelle)
-CHROME_PATH = "/usr/bin/google-chrome"
+# pour Linux (Docker / Render)
+
+import sys
+
+if sys.platform == "win32":
+    CHROME_PATH = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+else:
+    CHROME_PATH = "/usr/bin/google-chrome"  # Linux / Docker
+
 
 BASE_URL = "https://www.gpsvisualizer.com"
 DOWNLOAD_SUFFIX = "_e"
@@ -109,21 +116,11 @@ async def download_gpx(gpx_file: Path, output_file: Path):
     try:
         log(f"🌍 Traitement {gpx_file.name}")
 
-        # BLOC MODIFIÉ : arguments critiques pour Docker
         browser = await launch(
             headless=True,
             executablePath=CHROME_PATH,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",  # Argument CRITIQUE ajouté pour Docker
-                "--disable-gpu",
-                "--disable-extensions"
-            ],
-            handleSIGINT=False,
-            handleSIGTERM=False,
-            handleSIGHUP=False,
-            timeout=NAV_TIMEOUT
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-gpu", "--disable-extensions"],
+            handleSIGINT=False, handleSIGTERM=False, handleSIGHUP=False, timeout=NAV_TIMEOUT
         )
 
         page = await browser.newPage()

@@ -13,53 +13,146 @@ from lxml import etree
 from pathlib import Path
 import streamlit as st
 import time
+import sys
 
 # ===============================================================
-# CONFIGURATION
+# CONFIGURATION - HYBRIDE LINUX/WINDOWS
 # ===============================================================
 
-# Chemin RELATIF pour Docker / Linux
-BASE_PATH = Path("/app/data/Dossier_clients")
+def get_base_path():
+    """Retourne le chemin base compatible Linux/Docker mais fonctionnel sur Windows"""
+    
+    # Sur Windows, on va créer un équivalent du chemin /app/data/Dossier_clients
+    if sys.platform == "win32":
+        # Plusieurs stratégies pour trouver le bon chemin sur Windows:
+        
+        # 1. Essayer le dossier courant + data/Dossier_clients
+        current_dir = Path.cwd()
+        windows_path = current_dir / "data" / "Dossier_clients"
+        
+        # 2. Si on est dans utils/, remonter d'un niveau
+        if "utils" in str(current_dir):
+            windows_path = current_dir.parent / "data" / "Dossier_clients"
+        
+        # 3. Fallback: créer dans Documents
+        if not windows_path.exists():
+            windows_path = Path.home() / "Documents" / "ground_water_finder" / "data" / "Dossier_clients"
+        
+        # Créer le chemin et retourner sous forme Linux/Docker simulée
+        windows_path.mkdir(parents=True, exist_ok=True)
+        print(f"🔧 Windows: Chemin réel = {windows_path}")
+        
+        # Pour la compatibilité, on garde /app/data/Dossier_clients comme référence
+        # mais on utilise le chemin Windows pour les opérations
+        return windows_path
+    
+    else:
+        # Sur Linux/Docker, utiliser le chemin standard
+        linux_path = Path("/app/data/Dossier_clients")
+        linux_path.mkdir(parents=True, exist_ok=True)
+        return linux_path
 
-# Créer le dossier s'il n'existe pas
-BASE_PATH.mkdir(parents=True, exist_ok=True)
+# BASE_PATH contient maintenant le chemin réel adapté au système
+BASE_PATH = get_base_path()
 
-# Debug
-print(f"✅ BASE_PATH créé: {BASE_PATH}")
-print(f"📂 Chemin absolu: {BASE_PATH.absolute()}")
+# Pour le debug, garder une variable avec le chemin Linux pour référence
+LINUX_STYLE_PATH = Path("/app/data/Dossier_clients")
 
+print("=" * 60)
+print(f"🔧 SYSTÈME: {sys.platform}")
+print(f"📁 CHEMIN RÉEL (adapté): {BASE_PATH}")
+print(f"📁 CHEMIN LINUX (style): {LINUX_STYLE_PATH}")
+print(f"📁 EXISTE: {BASE_PATH.exists()}")
+print("=" * 60)
 
 # ===============================================================
-# 1️⃣ CRÉATION DES DOSSIERS CLIENT
+# 1️⃣ CRÉATION DES DOSSIERS CLIENT - VERSION PORTABLE
 # ===============================================================
-
 
 def setup_owner_folders(email, phone, surface):
+    """Crée la structure de dossiers avec gestion de chemins cross-platform"""
+    
     # Nettoyer les entrées
     email_clean = email.strip() if email else "sans_email"
     phone_clean = str(phone).strip().replace('+', '').replace(' ', '_').replace('-', '_') if phone else "sans_telephone"
     
+    # Nom du dossier client
     folder_name = f"{email_clean.replace('@','_at_').replace('.','_')}_{phone_clean}"
+    
+    # IMPORTANT: Toujours utiliser BASE_PATH (déjà adapté au système)
     owner_folder = BASE_PATH / folder_name
 
+    # Structure des sous-dossiers (identique pour tous les systèmes)
     input_folder = owner_folder / "INPUT"
     output_folder = owner_folder / "OUTPUT"
     a_convertir = output_folder / "A_convertir"
     convertir = output_folder / "Convertir"
     rendu = owner_folder / "RENDU"
 
-    # Créer tous les dossiers
-    for f in [owner_folder, input_folder, output_folder, a_convertir, convertir, rendu]:
-        f.mkdir(parents=True, exist_ok=True)
-        print(f"📁 Dossier créé: {f}")
-        st.write(f"📁 Dossier créé: {f}")
+    # Debug avant création
+    st.write("🔧 **Debug création dossiers:**")
+    st.write(f"- Système: {sys.platform}")
+    st.write(f"- Base path: {BASE_PATH}")
+    st.write(f"- Dossier client: {owner_folder}")
 
-    # surface.txt
+    # Créer tous les dossiers
+    folders_to_create = [owner_folder, input_folder, output_folder, a_convertir, convertir, rendu]
+    
+    for folder in folders_to_create:
+        try:
+            # Utiliser mkdir avec parents=True pour créer toute l'arborescence
+            folder.mkdir(parents=True, exist_ok=True)
+            print(f"✅ Dossier créé: {folder}")
+            
+            # Vérifier immédiatement que le dossier existe
+            if folder.exists():
+                st.write(f"✅ {folder.name}/ créé")
+            else:
+                st.error(f"❌ {folder.name}/ non créé!")
+                raise Exception(f"Échec création: {folder}")
+                
+        except Exception as e:
+            error_msg = f"❌ Erreur création dossier {folder}: {e}"
+            print(error_msg)
+            st.error(error_msg)
+            # Afficher plus de détails sur Windows
+            if sys.platform == "win32":
+                st.write(f"Permissions du parent {folder.parent}: {os.access(folder.parent, os.W_OK)}")
+            raise
+
+    # Créer surface.txt dans INPUT
     surface_file = input_folder / "surface.txt"
-    with open(surface_file, "w", encoding="utf-8") as f:
-        f.write(surface)
-    print(f"✅ surface.txt créé: {surface_file}")
-    st.write(f"✅ surface.txt créé: {input_folder}")
+    try:
+        with open(surface_file, "w", encoding="utf-8") as f:
+            f.write(surface if surface else "Surface non spécifiée")
+        print(f"✅ surface.txt créé: {surface_file}")
+        st.success(f"✅ surface.txt créé dans INPUT")
+        
+        # Vérifier que le fichier existe
+        if not surface_file.exists():
+            st.error(f"❌ surface.txt n'a pas été créé!")
+            
+    except Exception as e:
+        error_msg = f"❌ Erreur création surface.txt: {e}"
+        print(error_msg)
+        st.error(error_msg)
+        raise
+
+    # Vérification finale avec listing
+    print(f"\n✅ STRUCTURE CRÉÉE À L'EMPLACEMENT:")
+    print(f"   {owner_folder}")
+    
+    st.write(f"\n📁 **Structure créée dans:**")
+    st.code(str(owner_folder))
+    
+    # Lister le contenu pour vérification
+    if owner_folder.exists():
+        st.write("📂 **Contenu du dossier client:**")
+        for item in owner_folder.iterdir():
+            if item.is_dir():
+                st.write(f"  📁 {item.name}/")
+                for subitem in item.iterdir():
+                    st.write(f"    📁 {subitem.name}/")
 
     return {
         "base": str(owner_folder),
@@ -71,9 +164,10 @@ def setup_owner_folders(email, phone, surface):
     }
 
 # ===============================================================
-# 2️⃣ EXTRACTION + POINTS ÉQUIDISTANTS
+# 2️⃣ EXTRACTION + POINTS ÉQUIDISTANTS (inchangé)
 # ===============================================================
 def extract_coordinates_and_generate_equidistant_points(file_path, folders, nombre_points=None):
+    """Extrait les coordonnées et génère des points équidistants"""
     coords = []
     ext = file_path.rsplit(".", 1)[-1].lower()
 
@@ -132,42 +226,44 @@ def extract_coordinates_and_generate_equidistant_points(file_path, folders, nomb
         for j in range(1, n + 1):
             eq_pts.append(Point(p2.x + j * v[0], p2.y + j * v[1]))
 
+    # IMPORTANT: Utiliser Path() pour les chemins
+    output_path = Path(folders["output"]) / "equidistant_points.geojson"
+    
     gdf_eq = gpd.GeoDataFrame(geometry=eq_pts, crs=epsg)
-    out = os.path.join(folders["output"], "equidistant_points.geojson")
-    gdf_eq.to_file(out, driver="GeoJSON")
+    gdf_eq.to_file(str(output_path), driver="GeoJSON")
 
-    print(f"✅ GeoJSON points équidistants créés : {out}")
-    st.write(f"✅ GeoJSON points équidistants créés : {out}")
+    print(f"✅ GeoJSON points équidistants créés : {output_path}")
+    st.write(f"✅ GeoJSON points équidistants créés dans OUTPUT")
 
     return gdf_eq
 
 # ===============================================================
-# 3️⃣ DÉCOUPAGE EN CHUNKS
+# 3️⃣ DÉCOUPAGE EN CHUNKS (inchangé)
 # ===============================================================
 def process_geojson_files_auto(folders, max_points=400):
-    src = folders["output"]
-    dst = folders["a_convertir"]
-    os.makedirs(dst, exist_ok=True)
-    files = [f for f in os.listdir(src) if f.endswith(".geojson")]
+    src = Path(folders["output"])
+    dst = Path(folders["a_convertir"])
+    dst.mkdir(parents=True, exist_ok=True)
+    files = [f for f in src.iterdir() if f.suffix == ".geojson"]
     count = 1
     
     st.write(f"📂 Découpage de {len(files)} fichier(s) GeoJSON")
     
     for f in files:
-        gdf = gpd.read_file(os.path.join(src, f))
-        st.write(f"  📄 {f}: {len(gdf)} points")
+        gdf = gpd.read_file(str(f))
+        st.write(f"  📄 {f.name}: {len(gdf)} points")
         
         for i in range(0, len(gdf), max_points):
             chunk = gdf.iloc[i:i + max_points]
-            out = os.path.join(dst, f"chunk_{count}.geojson")
-            chunk.to_file(out, driver="GeoJSON")
+            out = dst / f"chunk_{count}.geojson"
+            chunk.to_file(str(out), driver="GeoJSON")
             
             print(f"✅ Chunk {count} créé: {out}")
-            st.write(f"    ✅ Chunk {count}: {os.path.basename(out)}")
+            st.write(f"    ✅ Chunk {count}: {out.name}")
             count += 1
 
 # ===============================================================
-# 4️⃣ GEOJSON → GPX - LES GPX RESTENT DANS A_convertir
+# 4️⃣ GEOJSON → GPX (inchangé)
 # ===============================================================
 def geojson_to_gpx_valid(geojson_path, output_path):
     gdf = gpd.read_file(geojson_path)
@@ -205,18 +301,17 @@ def geojson_to_gpx_valid(geojson_path, output_path):
     st.write(f"✅ GPX créé: {os.path.basename(output_path)}")
 
 def convert_all_geojson_to_gpx(folders):
-    geojson_folder = folders['a_convertir']
-    geojson_files = [f for f in os.listdir(geojson_folder) if f.endswith(".geojson")]
+    geojson_folder = Path(folders['a_convertir'])
+    geojson_files = [f for f in geojson_folder.iterdir() if f.suffix == ".geojson"]
     gpx_files = []
     
     st.write(f"🔄 Conversion de {len(geojson_files)} fichier(s) en GPX")
     
     for file in geojson_files:
-        input_path = os.path.join(geojson_folder, file)
-        # Les GPX sont créés directement dans A_convertir (même dossier que les GeoJSON)
-        output_path = os.path.join(folders['a_convertir'], file.replace(".geojson", ".gpx"))
+        input_path = str(file)
+        output_path = str(geojson_folder / f"{file.stem}.gpx")
         
-        st.write(f"  🔄 {file} → {os.path.basename(output_path)}")
+        st.write(f"  🔄 {file.name} → {os.path.basename(output_path)}")
         geojson_to_gpx_valid(input_path, output_path)
         
         gpx_files.append(output_path)
@@ -224,21 +319,52 @@ def convert_all_geojson_to_gpx(folders):
     return gpx_files
 
 # ===============================================================
-# STREAMLIT INTERFACE
+# STREAMLIT INTERFACE - VERSION AMÉLIORÉE
 # ===============================================================
 def create_streamlit_app():
-    st.set_page_config(page_title="🌍 Ground Water Finder", page_icon="🌍", layout="wide")
+    #st.set_page_config(page_title="🌍 Ground Water Finder", page_icon="🌍", layout="wide")
     st.title("🌍 GROUND WATER FINDER - SETUP")
     st.markdown("---")
     
-    # Afficher le chemin
-    st.info(f"📍 **Les fichiers seront sauvegardés dans :**")
-    st.code(str(BASE_PATH.absolute()))
-
+    # Informations système
+    st.info("🔧 **INFORMATIONS SYSTÈME:**")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write(f"**Système:** {sys.platform}")
+        st.write(f"**Python:** {sys.version.split()[0]}")
+    with col2:
+        st.write(f"**Chemin base:** {BASE_PATH}")
+        st.write(f"**Accessible:** {'✅ Oui' if BASE_PATH.exists() else '❌ Non'}")
+    
+    # Vérifier les permissions
+    try:
+        test_file = BASE_PATH / "test_permission.txt"
+        with open(test_file, "w") as f:
+            f.write("test")
+        os.remove(test_file)
+        st.success("✅ Permissions d'écriture OK sur le dossier base")
+    except Exception as e:
+        st.error(f"❌ Problème de permissions: {e}")
+        st.info("💡 Essayez de lancer Streamlit en tant qu'administrateur")
+    
     uploaded_file = st.file_uploader("Téléchargez votre fichier de contour", type=['gpx', 'kml', 'kmz'])
     email = st.text_input("📧 Email")
     phone = st.text_input("📞 Téléphone")
     surface = st.text_input("📐 Surface")
+
+    # Afficher l'arborescence actuelle
+    with st.expander("📁 Voir l'arborescence actuelle"):
+        def list_directory(path, indent=0):
+            path = Path(path)
+            if path.exists():
+                for item in sorted(path.iterdir()):
+                    if item.is_file():
+                        st.text(f"{'    ' * indent}📄 {item.name}")
+                    elif item.is_dir():
+                        st.text(f"{'    ' * indent}📁 {item.name}/")
+                        list_directory(item, indent + 1)
+        
+        list_directory(BASE_PATH if BASE_PATH.exists() else Path.cwd())
 
     process_button = st.button("🚀 Lancer le traitement", type="primary", disabled=not uploaded_file)
     if not process_button:
@@ -253,7 +379,13 @@ def create_streamlit_app():
     # 1️⃣ Création dossiers
     progress.progress(10, text="Création des dossiers…")
     status.write("📁 Création des dossiers")
-    folders = setup_owner_folders(email, phone_clean, surface_clean)
+    try:
+        folders = setup_owner_folders(email, phone_clean, surface_clean)
+        st.success(f"✅ Dossiers créés avec succès!")
+    except Exception as e:
+        st.error(f"❌ Échec création dossiers: {e}")
+        st.info("💡 Vérifiez que vous avez les permissions d'écriture")
+        return
 
     # 2️⃣ Sauvegarde fichier uploadé
     temp_dir = Path("temp")
@@ -261,7 +393,8 @@ def create_streamlit_app():
     temp_file_path = temp_dir / uploaded_file.name
     with open(temp_file_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
-    dest_contour = os.path.join(folders["input"], uploaded_file.name)
+    
+    dest_contour = Path(folders["input"]) / uploaded_file.name
     shutil.copy2(temp_file_path, dest_contour)
     progress.progress(25, text="Fichier contour copié")
     status.write(f"📄 Fichier contour copié dans INPUT : {uploaded_file.name}")
@@ -288,48 +421,52 @@ def create_streamlit_app():
     status.write("✅ Traitement terminé")
 
     # 7️⃣ Résultats
-    st.success("✅ Traitement terminé avec succès !")
+    st.success("🎉 Traitement terminé avec succès !")
     
-    # Métriques
-    col1, col2, col3 = st.columns(3)
+    # Afficher le résultat final
+    col1, col2 = st.columns(2)
+    
     with col1:
+        st.subheader("📊 Résumé")
         st.metric("📍 Points générés", len(gdf))
-    with col2:
         st.metric("📄 Fichiers GPX créés", len(gpx_files))
-    with col3:
-        # Compter tous les fichiers
-        base_path = Path(folders['base'])
-        total_files = sum(1 for _ in base_path.rglob("*") if _.is_file())
-        st.metric("📊 Total fichiers", total_files)
+        st.metric("📁 Dossier client", Path(folders['base']).name)
     
-    # Structure des fichiers
-    st.subheader("📁 Structure des fichiers créés :")
-    def show_tree(path, indent=0):
-        path = Path(path)
-        if path.exists():
-            for item in sorted(path.iterdir()):
-                if item.is_file():
-                    size = item.stat().st_size
-                    st.text(f"{'    ' * indent}📄 {item.name} ({size:,} octets)")
-                elif item.is_dir():
-                    st.text(f"{'    ' * indent}📁 {item.name}/")
-                    show_tree(item, indent + 1)
+    with col2:
+        st.subheader("📁 Emplacement")
+        st.code(folders['base'])
+        
+        # Bouton pour ouvrir l'explorateur (Windows)
+        if sys.platform == "win32":
+            if st.button("📂 Ouvrir dans l'explorateur Windows"):
+                try:
+                    os.startfile(folders["base"])
+                except:
+                    st.info(f"Copiez ce chemin dans l'explorateur: {folders['base']}")
     
-    show_tree(folders['base'])
+    # Afficher la structure
+    st.subheader("🌳 Structure créée:")
+    with st.expander("Voir l'arborescence complète"):
+        def show_tree(path, indent=0):
+            path = Path(path)
+            if path.exists():
+                for item in sorted(path.iterdir()):
+                    if item.is_file():
+                        size = item.stat().st_size
+                        st.text(f"{'    ' * indent}📄 {item.name} ({size:,} octets)")
+                    elif item.is_dir():
+                        st.text(f"{'    ' * indent}📁 {item.name}/")
+                        show_tree(item, indent + 1)
+        
+        show_tree(folders['base'])
     
-    # Informations sur A_convertir
-    a_convertir_path = Path(folders['a_convertir'])
-    if a_convertir_path.exists():
-        gpx_count = sum(1 for f in a_convertir_path.iterdir() if f.suffix == '.gpx')
-        geojson_count = sum(1 for f in a_convertir_path.iterdir() if f.suffix == '.geojson')
-        st.info(f"📂 **A_convertir contient :** {gpx_count} fichier(s) GPX et {geojson_count} fichier(s) GeoJSON")
-    
-    # Bouton pour ouvrir l'explorateur
-    if st.button("📂 Ouvrir le dossier dans l'explorateur"):
-        try:
-            os.startfile(folders["base"])
-        except:
-            st.info(f"Chemin: {folders['base']}")
+    # Message final
+    st.balloons()
+    st.info("""
+    🎯 **Prochaine étape:** 
+    Les fichiers GPX sont prêts dans `A_convertir/`. 
+    Vous pouvez maintenant utiliser ces fichiers pour la prospection sur le terrain.
+    """)
 
 # ===============================================================
 # EXÉCUTION
