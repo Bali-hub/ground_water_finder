@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libgdal-dev \
     gdal-bin \
+    curl \
     libgl1 \
     libglib2.0-0 \
     libsm6 \
@@ -22,7 +23,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 
 RUN pip install --upgrade pip \
-    && pip install --no-cache-dir numpy==1.24.3 \
     && pip install --no-cache-dir -r requirements.txt
 
 # =====================================================
@@ -49,8 +49,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxi6 libxrandr2 libxrender1 libxss1 libxtst6 \
     libsm6 libice6 \
     fonts-liberation wget gnupg ca-certificates \
-    && wget -qO- https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
+    && mkdir -p /etc/apt/keyrings \
+    && wget -qO /etc/apt/keyrings/google.asc https://dl.google.com/linux/linux_signing_key.pub \
+    && gpg --dearmor -o /etc/apt/keyrings/google.gpg /etc/apt/keyrings/google.asc \
+    && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
     && apt-get update \
     && apt-get install -y google-chrome-stable \
     && apt-get clean \

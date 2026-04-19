@@ -4,35 +4,39 @@ services:
   ground-water:
     build: .
     container_name: ground_water_finder
+
+    env_file:
+      - .env   # 👈 Charge ton fichier .env
+
     ports:
       - "10000:10000"
+
     volumes:
-      # Données clients – montées au bon endroit (cohérent avec BASE_CLIENTS)
+      # Données clients
       - ./data:/app/data
-      # Dossier temporaire pour les cartes – dans le home de l'utilisateur
+      # Dossier temporaire pour les cartes
       - ./temp_cartes:/home/appuser/temp_cartes
-      # Code source (monté pour développement, pas obligatoire en prod)
+      # Code source (dev)
       - ./utils:/app/utils
       - ./app.py:/app/app.py
-      # Caches (persistants)
+      # Caches persistants
       - matplotlib_cache:/home/appuser/.cache/matplotlib
       - streamlit_cache:/home/appuser/.streamlit
 
     environment:
-      # --- Backblaze B2 (depuis .env) ---
-      - B2_KEY_ID=${B2_KEY_ID}
-      - B2_APPLICATION_KEY=${B2_APPLICATION_KEY}
       # --- Streamlit ---
       - STREAMLIT_SERVER_PORT=10000
       - STREAMLIT_SERVER_ADDRESS=0.0.0.0
       - STREAMLIT_SERVER_ENABLE_STATIC_FILE_HANDLING=true
       - STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=false
+
       # --- Python / Matplotlib ---
       - PYTHONUNBUFFERED=1
       - MPLBACKEND=Agg
       - QT_QPA_PLATFORM=offscreen
       - XDG_RUNTIME_DIR=/tmp/runtime-root
-      # --- Chemin temporaire (utilisé par app.py) ---
+
+      # --- Chemin temporaire ---
       - IMAGE_TEMP_DIR=/home/appuser/temp_cartes
 
     shm_size: '2gb'

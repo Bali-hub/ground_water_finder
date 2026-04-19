@@ -1,30 +1,23 @@
-# ============ CŒUR DE L'APPLICATION ============
-streamlit==1.28.0        # Interface principale
 
-# ============ TRAITEMENT DES DONNÉES ============
-pandas==2.0.3            # DataFrames (utils_geotraitement, utils_setup)
+matplotlib==3.7.2
+numba==0.58.1
 numpy==1.24.3
-numba==0.58.1  # Utilisé par utils_geotraitement.py            # Calculs numériques (utils_geotraitement, utils_setup)
-
-# ============ GÉOSPATIAL & CARTOGRAPHIE ============
-geopandas==0.14.0        # Traitement données spatiales (TOUS les utils)
-fiona==1.9.4 
-shapely==2.0.1           # Géométries (utils_export, utils_geotraitement, utils_setup)
-pyproj==3.6.1            # Systèmes de coordonnées (via geopandas)
-contextily==1.4.0        # Fonds de carte (utils_export)
-lxml==4.9.3              # Parsing XML/KML (utils_export, utils_geotraitement, utils_setup)
-simplekml==1.3.6         # Génération KML (utils_export)
-gpxpy==1.6.2             # Parsing GPX (utils_export, utils_geotraitement, utils_setup)
-
-# ============ VISUALISATION ============
-matplotlib==3.7.2        # Génération des cartes PNG (utils_export)
-
-# ============ WEB & ASYNCHRONE ============
-requests==2.31.0         # Téléchargements HTTP (utils_browser, utils_upload_b2)
-beautifulsoup4==4.12.2   # Parsing HTML (utils_browser)
-pyppeteer==1.0.2         # Navigation browser headless (utils_browser)
-asyncio==3.4.3           # Programmation asynchrone (app, utils_browser)
-
-# ============ BACKBLAZE B2 CLOUD ============
-b2sdk==2.2.0             # Upload vers Backblaze (utils_upload_b2)
-python-dotenv==1.0.0     # Gestion variables d'env (utils_upload_b2)
+gpxpy==1.6.2
+pandas==2.0.3
+pyppeteer==2.0.0
+pyproj==3.6.1
+python-dotenv==1.0.0
+requests==2.31.0
+scikit-learn==1.3.2
+scipy==1.10.1
+Shapely==2.0.2
+simplekml==1.3.6
+streamlit==1.25.0
+tqdm==4.65.0
+geopandas
+lxml==4.9.3
+contextily==1.3.0
+rasterio==1.3.8
+alphashape==1.3.1
+beautifulsoup4==4.12.3
+b2sdk==2.10.4

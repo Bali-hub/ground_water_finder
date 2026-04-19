@@ -1,4 +1,5 @@
-﻿import os
+﻿
+import os
 import zipfile
 import shutil
 from datetime import datetime
@@ -17,7 +18,6 @@ from shapely.ops import unary_union
 import gpxpy
 from lxml import etree
 import matplotlib.patches as mpatches
-import matplotlib.lines as mlines
 import simplekml
 
 st.title("🗺️ Carte de prospection – Affichage complet")
@@ -45,7 +45,7 @@ def load_contour(file_path: Path):
             gpx = gpxpy.parse(f)
         points = [(pt.longitude, pt.latitude) for track in gpx.tracks for seg in track.segments for pt in seg.points]
         if len(points) < 3:
-            raise ValueError("Pas assez de points")
+            raise ValueError("Pas assez de points pour créer un polygone")
         return Polygon(points)
     elif ext in [".kml", ".kmz"]:
         if ext == ".kmz":
@@ -56,7 +56,7 @@ def load_contour(file_path: Path):
                         kml_bytes = z.read(name)
                         break
                 if kml_bytes is None:
-                    raise ValueError("Aucun KML trouvé")
+                    raise ValueError("Aucun KML trouvé dans le KMZ.")
         else:
             kml_bytes = file_path.read_bytes()
         root = etree.fromstring(kml_bytes)
@@ -70,10 +70,10 @@ def load_contour(file_path: Path):
                     if len(coords) >= 3:
                         polygons.append(Polygon(coords))
         if not polygons:
-            raise ValueError("Aucun polygone trouvé")
+            raise ValueError(f"Aucun polygone trouvé dans {file_path}")
         return unary_union(polygons) if len(polygons) > 1 else polygons[0]
     else:
-        raise ValueError("Format non supporté")
+        raise ValueError("Format non supporté : GPX, KML ou KMZ uniquement")
 
 def charger_couche(path: Path):
     ext = path.suffix.lower()
@@ -100,6 +100,8 @@ def charger_couche(path: Path):
                 coords.append((float(lon), float(lat)))
     if not coords and ext != ".shp":
         return None
+    if ext == ".shp":
+        return gpd.read_file(path)
     return gpd.GeoDataFrame(geometry=[Point(xy) for xy in coords], crs="EPSG:4326")
 
 def generer_journal(couches, output_path: Path):
@@ -110,6 +112,7 @@ def generer_journal(couches, output_path: Path):
         f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
         for nom, gdf in couches.items():
             f.write(f"{nom.upper():<15}: {len(gdf) if gdf is not None else 0} entités\n")
+        f.write("=" * 60 + "\n")
     return True
 
 def shp_to_kml_gpx_kmz(gdf, basename, target_dirs):
@@ -144,23 +147,24 @@ def main():
     dossier_client, nom_client = choisir_dossier_client()
     dossier_RENDU = dossier_client / "RENDU"
     
-    # Chercher le contour
+    # Chercher le contour avec fallback
     contour_input_path = None
+    
     input_dir = dossier_client / "INPUT"
     if input_dir.exists():
         contour_files = [f for f in input_dir.iterdir() if f.suffix.lower() in [".gpx", ".kml", ".kmz"]]
         if contour_files:
             contour_input_path = contour_files[0]
-            st.info(f"📁 Contour: {contour_input_path.name}")
+            st.info(f"📁 Contour trouvé dans INPUT: {contour_input_path.name}")
     
     if contour_input_path is None:
         contour_shp = dossier_RENDU / "CONTOUR.shp"
         if contour_shp.exists():
             contour_input_path = contour_shp
-            st.info("📁 Contour: CONTOUR.shp")
+            st.info(f"📁 Fallback: utilisation de CONTOUR.shp comme contour")
     
     if contour_input_path is None:
-        st.error("❌ Aucun contour trouvé")
+        st.error("❌ Aucun fichier de contour trouvé")
         st.stop()
     
     if contour_input_path.suffix.lower() == ".shp":
@@ -173,7 +177,7 @@ def main():
 
     for f in dossier_RENDU.iterdir():
         lf = f.name.lower()
-        if lf.endswith((".shp", ".gpx", ".kml", ".kmz")) and "contour" not in lf:
+        if lf.endswith((".shp", ".gpx", ".kml", ".kmz")):
             gdf = charger_couche(f)
             if gdf is None or gdf.empty:
                 continue
@@ -185,57 +189,49 @@ def main():
             elif "intersections" in lf:
                 couches["intersections"] = gdf
 
-    # ================== AFFICHAGE AVEC NOUVEAUX STYLES ==================
     fig, ax = plt.subplots(figsize=(14, 12))
     handles = []
 
-    # Fractures : lignes rouges pointillées
     if couches.get("lines") is not None:
-        couches["lines"].plot(ax=ax, color="red", linewidth=2, linestyle=":", alpha=0.9, zorder=6)
-    handles.append(mlines.Line2D([], [], color="red", linewidth=2, linestyle=":", label="Fractures identifiées"))
+        couches["lines"].plot(ax=ax, color="orange", linewidth=3.0, linestyle="--", alpha=0.8, zorder=6)
+    handles.append(mpatches.Patch(facecolor="orange", edgecolor="orange", label="Fractures identifiées"))
 
-    # Dolines : bleues
     if couches.get("dolines") is not None:
-        couches["dolines"].plot(ax=ax, color="blue", markersize=60, alpha=0.7, marker="o", edgecolor="white", linewidth=1, zorder=4)
-    handles.append(mpatches.Patch(facecolor="blue", edgecolor="white", label="Dolines"))
+        couches["dolines"].plot(ax=ax, color="red", markersize=60, alpha=0.5, marker="o", edgecolor="white", linewidth=1.0, zorder=4)
+    handles.append(mpatches.Patch(facecolor="red", edgecolor="white", label="Dolines"))
 
-    # Points de forage : jaune, étoile
     if couches.get("intersections") is not None:
-        couches["intersections"].plot(ax=ax, color="gold", markersize=120, marker="*", edgecolor="black", linewidth=1, alpha=0.9, zorder=5)
-    handles.append(mpatches.Patch(facecolor="gold", edgecolor="black", label="Points de forage"))
+        couches["intersections"].plot(ax=ax, color="lime", markersize=100, marker="*", edgecolor="black", linewidth=1.5, alpha=0.9, zorder=5)
+    handles.append(mpatches.Patch(facecolor="lime", edgecolor="black", label="Points de forage"))
 
-    # Contour : couleur café (marron), face vide
-    couches["contour"].plot(ax=ax, facecolor="none", edgecolor="saddlebrown", linewidth=3, alpha=0.9, zorder=5)
-    handles.append(mpatches.Patch(facecolor="none", edgecolor="saddlebrown", linewidth=3, label="Surface prospectée"))
+    couches["contour"].plot(ax=ax, facecolor="none", edgecolor="darkblue", linewidth=3, alpha=0.9, zorder=5)
+    handles.append(mpatches.Patch(facecolor="none", edgecolor="darkblue", linewidth=3, label="Surface prospectée"))
 
-    # Fond de carte
     try:
         ctx.add_basemap(ax, source="http://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}", crs="EPSG:3857", zorder=0)
     except:
-        try:
-            ctx.add_basemap(ax, source=ctx.providers.OpenStreetMap.Mapnik, crs="EPSG:3857", zorder=0)
-        except:
-            ax.set_facecolor("#e8f4f8")
+        ctx.add_basemap(ax, source=ctx.providers.OpenStreetMap.Mapnik, crs="EPSG:3857", zorder=0)
 
     ax.set_axis_off()
-    ax.set_title(f"🗺️ Prospection - {nom_client}", fontsize=18, weight="bold")
-    ax.legend(handles=handles, loc="lower left", fontsize=10, frameon=True)
+    ax.set_title(f"🗺️ Carte de prospection – Projet {nom_client}", fontsize=18, weight="bold")
+    ax.legend(handles=handles, loc="lower left", fontsize=10, frameon=True, framealpha=0.95)
+    plt.tight_layout()
 
     rapport_dir = dossier_RENDU / f"Rapport_{nom_client}"
     rapport_dir.mkdir(parents=True, exist_ok=True)
 
     fig_path = rapport_dir / "carte_prospection.png"
-    fig.savefig(fig_path, dpi=150, bbox_inches="tight", facecolor="white")
+    fig.savefig(fig_path, dpi=150, bbox_inches="tight", pad_inches=0.1, facecolor="white", edgecolor="none")
     st.pyplot(fig, clear_figure=True)
     plt.close(fig)
 
-    # Création des dossiers et du ZIP
     data_dir = rapport_dir / "Data"
+    convertir_dir = rapport_dir / "Convertir"
     shp_dir = data_dir / "SHP"
     gpx_dir = data_dir / "GPX"
     kml_dir = data_dir / "KML"
     kmz_dir = data_dir / "KMZ"
-    for d in [shp_dir, gpx_dir, kml_dir, kmz_dir]:
+    for d in [data_dir, convertir_dir, shp_dir, gpx_dir, kml_dir, kmz_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
     for f in dossier_RENDU.iterdir():
@@ -248,6 +244,10 @@ def main():
 
     generer_journal(couches, rapport_dir / "journal.txt")
 
+    convertir_src = dossier_client / "OUTPUT" / "Convertir"
+    if convertir_src.exists():
+        shutil.copytree(convertir_src, convertir_dir, dirs_exist_ok=True)
+
     target_dirs = {"kml": kml_dir, "kmz": kmz_dir, "gpx": gpx_dir}
     for nom, gdf in couches.items():
         if gdf is not None:
@@ -255,7 +255,7 @@ def main():
 
     zip_path = rapport_dir.parent / f"{nom_client}.zip"
     shutil.make_archive(base_name=str(zip_path.with_suffix("")), format="zip", root_dir=rapport_dir)
-    st.success(f"✅ ZIP généré: {nom_client}.zip")
+    st.info(f"📦 Archive ZIP générée : {zip_path.name}")
 
 if __name__ == "__main__":
     main()

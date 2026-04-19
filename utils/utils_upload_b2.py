@@ -1,163 +1,173 @@
-# utils/utils_upload_b2.py
 from pathlib import Path
-import hashlib
 import os
+import hashlib
 import requests
 import shutil
-import glob
 from dotenv import load_dotenv
 
 # =========================
-# 1. CHEMINS
+# ROOT PROJET (ULTRA IMPORTANT)
 # =========================
 ROOT_DIR = Path(__file__).resolve().parent.parent
+SEARCH_ROOT = ROOT_DIR / "data"
 ENV_FILE = ROOT_DIR / ".env"
-DATA_DIR = ROOT_DIR / "data"
-CLIENTS_DIR = DATA_DIR / "Dossier_clients"
+load_dotenv(ENV_FILE)
 
-# =========================
-# 2. CHARGER LES CLÉS B2
-# =========================
-B2_KEY_ID = None
-B2_APP_KEY = None
-if ENV_FILE.exists():
-    load_dotenv(ENV_FILE)
-    B2_KEY_ID = os.getenv("keyID")
-    B2_APP_KEY = os.getenv("applicationKey")
+KEY_ID = os.getenv("B2_KEY_ID")
+APP_KEY = os.getenv("B2_APPLICATION_KEY")
 
-# =========================
-# 3. FONCTION D'UPLOAD AVEC SUPPRESSION
-# =========================
-def upload_and_delete(zip_path, delete_folder=True):
-    """
-    Upload un fichier ZIP vers Backblaze B2
-    Si delete_folder=True, supprime le dossier client après upload réussi
-    """
-    if not B2_KEY_ID or not B2_APP_KEY:
-        return {'success': False, 'error': 'Clés B2 non configurées'}
-    
+if not KEY_ID or not APP_KEY:
+    raise SystemExit("❌ .env manquant")
+
+BUCKET_NAME = "ground-water-finder"
+
+# Dossier temporaire pour sauvegarder les cartes avant suppression
+TEMP_CARTES = Path("/tmp/cartes_sauvegardees")
+TEMP_CARTES.mkdir(parents=True, exist_ok=True)
+
+
+def auth():
+    r = requests.get(
+        "https://api.backblazeb2.com/b2api/v2/b2_authorize_account",
+        auth=(KEY_ID, APP_KEY),
+        timeout=30
+    )
+    if not r.ok:
+        raise SystemExit("❌ Auth échouée")
+    return r.json()
+
+
+def get_bucket(auth_data):
+    r = requests.post(
+        auth_data["apiUrl"] + "/b2api/v2/b2_list_buckets",
+        headers={"Authorization": auth_data["authorizationToken"]},
+        json={"accountId": auth_data["accountId"]},
+        timeout=30
+    )
+    for b in r.json().get("buckets", []):
+        if b["bucketName"] == BUCKET_NAME:
+            return b
+    raise SystemExit("❌ Bucket introuvable")
+
+
+def find_zip_files():
+    print("🔍 ROOT réel:", ROOT_DIR.resolve())
+    print("🔍 SEARCH_ROOT:", SEARCH_ROOT.resolve())
+    zip_files = list(SEARCH_ROOT.rglob("*.zip"))
+    # Filtrer les ZIP vides ou temporaires
+    zip_files = [
+        z for z in zip_files
+        if z.stat().st_size > 0
+        and "tmp" not in z.name.lower()
+        and not z.name.startswith(".")
+    ]
+    print(f"📦 ZIP trouvés (data seulement): {len(zip_files)}")
+    for z in zip_files:
+        print("➡️", z)
+    return zip_files
+
+
+def upload_file(file_path, auth_data, bucket):
+    """Upload un fichier ZIP. Retourne True si réussi, False sinon."""
+    print(f"📤 Upload: {file_path.name}")
+
+    r = requests.post(
+        auth_data["apiUrl"] + "/b2api/v2/b2_get_upload_url",
+        headers={"Authorization": auth_data["authorizationToken"]},
+        json={"bucketId": bucket["bucketId"]},
+        timeout=30
+    )
+    if not r.ok:
+        print("❌ get_upload_url échoué")
+        return False
+
+    up = r.json()
+    upload_url = up["uploadUrl"]
+    upload_auth = up["authorizationToken"]
+
+    sha1 = hashlib.sha1()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            sha1.update(chunk)
+
+    with open(file_path, "rb") as f:
+        r = requests.post(
+            upload_url,
+            headers={
+                "Authorization": upload_auth,
+                "X-Bz-File-Name": file_path.name,
+                "Content-Type": "application/zip",
+                "X-Bz-Content-Sha1": sha1.hexdigest()
+            },
+            data=f,
+            timeout=(30, 600)
+        )
+
+    if r.status_code == 200:
+        print("✅ OK:", file_path.name)
+        return True
+    else:
+        print(r.text)
+        print("❌ Upload échoué")
+        return False
+
+
+def sauvegarder_carte(client_folder):
+    """Copie la carte_prospection.png dans /tmp/cartes_sauvegardees"""
+    rapport_dir = client_folder / "RENDU" / f"Rapport_{client_folder.name}"
+    carte_path = rapport_dir / "carte_prospection.png"
+    if carte_path.exists():
+        backup_name = f"{client_folder.name}_carte_prospection.png"
+        backup_path = TEMP_CARTES / backup_name
+        shutil.copy2(carte_path, backup_path)
+        print(f"🗺️ Carte sauvegardée : {backup_path}")
+    else:
+        print(f"⚠️ Aucune carte trouvée pour {client_folder.name}")
+
+
+def supprimer_dossier_client(client_folder):
+    """Supprime le dossier client complet après upload réussi"""
     try:
-        # 1. AUTHENTIFICATION
-        auth_resp = requests.get(
-            "https://api.backblazeb2.com/b2api/v2/b2_authorize_account",
-            auth=(B2_KEY_ID, B2_APP_KEY),
-            timeout=30
-        )
-        if auth_resp.status_code != 200:
-            return {'success': False, 'error': f'Auth échouée: {auth_resp.status_code}'}
-        auth_data = auth_resp.json()
-
-        # 2. LISTER LES BUCKETS
-        buckets_resp = requests.post(
-            f"{auth_data['apiUrl']}/b2api/v2/b2_list_buckets",
-            headers={'Authorization': auth_data['authorizationToken']},
-            json={'accountId': auth_data['accountId']},
-            timeout=30
-        )
-        if buckets_resp.status_code != 200:
-            return {'success': False, 'error': f'Liste buckets échouée: {buckets_resp.status_code}'}
-
-        buckets = buckets_resp.json()['buckets']
-        if not buckets:
-            return {'success': False, 'error': 'Aucun bucket trouvé'}
-
-        bucket = buckets[0]
-        bucket_id = bucket['bucketId']
-
-        # 3. OBTENIR URL D'UPLOAD
-        upload_url_resp = requests.post(
-            f"{auth_data['apiUrl']}/b2api/v2/b2_get_upload_url",
-            headers={'Authorization': auth_data['authorizationToken']},
-            json={'bucketId': bucket_id},
-            timeout=30
-        )
-        if upload_url_resp.status_code != 200:
-            return {'success': False, 'error': f'URL upload échouée: {upload_url_resp.status_code}'}
-        upload_data = upload_url_resp.json()
-
-        # 4. UPLOADER LE ZIP
-        file_size = zip_path.stat().st_size
-        zip_name = zip_path.name
-        sha1 = hashlib.sha1()
-        with open(zip_path, 'rb') as f:
-            while chunk := f.read(8192):
-                sha1.update(chunk)
-
-        with open(zip_path, 'rb') as f:
-            upload_resp = requests.post(
-                upload_data['uploadUrl'],
-                headers={
-                    'Authorization': upload_data['authorizationToken'],
-                    'X-Bz-File-Name': zip_name,
-                    'Content-Type': 'application/zip',
-                    'X-Bz-Content-Sha1': sha1.hexdigest()
-                },
-                data=f,
-                timeout=120
-            )
-
-        if upload_resp.status_code == 200:
-            # Upload réussi, suppression optionnelle
-            if delete_folder:
-                client_folder = zip_path.parent.parent
-                try:
-                    shutil.rmtree(client_folder)
-                    return {
-                        'success': True,
-                        'message': f'✅ Upload réussi et dossier supprimé',
-                        'file_name': zip_name,
-                        'size': file_size
-                    }
-                except Exception as e:
-                    return {
-                        'success': True,
-                        'message': f'✅ Upload réussi (erreur suppression dossier: {e})',
-                        'file_name': zip_name,
-                        'size': file_size
-                    }
-            else:
-                return {
-                    'success': True,
-                    'message': '✅ Upload réussi (dossier conservé)',
-                    'file_name': zip_name,
-                    'size': file_size
-                }
-        else:
-            return {'success': False, 'error': f'Upload échoué: {upload_resp.status_code}'}
-
+        shutil.rmtree(client_folder)
+        print(f"🗑️ Dossier client supprimé : {client_folder}")
     except Exception as e:
-        return {'success': False, 'error': str(e)}
+        print(f"❌ Erreur suppression {client_folder} : {e}")
 
-# =========================
-# 4. MAIN AUTOMATIQUE
-# =========================
-def main(delete_folder=True):
-    """
-    Parcours tous les fichiers ZIP dans CLIENTS_DIR/RENDU et les upload vers B2.
-    Retourne une liste de résultats.
-    """
-    zip_pattern = str(CLIENTS_DIR / "*" / "RENDU" / "*.zip")
-    zip_files = [Path(f) for f in glob.glob(zip_pattern, recursive=True)]
-    results = []
+def main():
+    auth_data = auth()
+    bucket = get_bucket(auth_data)
 
+    zip_files = find_zip_files()
     if not zip_files:
-        print("⚠️ Aucun fichier ZIP trouvé")
-        return results
+        print("📭 Aucun ZIP trouvé dans tout le projet")
+        return
 
-    for zip_file in zip_files:
-        print(f"📤 Traitement: {zip_file.parent.parent.name}/{zip_file.name}")
-        result = upload_and_delete(zip_file, delete_folder)
-        if result.get('success'):
-            print(f"✅ {zip_file.name} uploadé et dossier supprimé" if delete_folder else f"✅ {zip_file.name} uploadé")
+    # Regrouper les ZIP par client
+    clients_zips = {}
+    for z in zip_files:
+        client_folder = z.parent.parent
+        clients_zips.setdefault(client_folder, []).append(z)
+
+    for client_folder, zips in clients_zips.items():
+        print(f"\n📁 Traitement du client : {client_folder.name}")
+        all_success = True
+        for z in zips:
+            if not upload_file(z, auth_data, bucket):
+                all_success = False
+                break
+        if all_success:
+            sauvegarder_carte(client_folder)
+            supprimer_dossier_client(client_folder)
         else:
-            print(f"❌ {zip_file.name} - Erreur: {result.get('error')}")
-        results.append(result)
+            print(f"⚠️ Client {client_folder.name} : upload échoué, dossier conservé.")
 
-    print("🎉 Tous les traitements sont terminés !")
-    return results
+    # ========== MESSAGE DE FIN ==========
+    print("\n" + "="*50)
+    print("Français : Travaux terminés. Pour plus d'amples détails sur le rapport, écrivez à m2techsecretariat@gmail.com")
+    print("English : Work completed. For further details about the report, contact m2techsecretariat@gmail.com")
+    print("="*50)
 
-# =========================
-# 5. POINT D'ENTRÉE
-# =========================
+    print("🎉 TERMINÉ")
+
 if __name__ == "__main__":
     main()
