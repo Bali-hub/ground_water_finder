@@ -5,6 +5,28 @@ import sys
 from io import StringIO
 from utils import utils_setup
 
+
+# 🧹 CLEAN STARTUP - suppression des fichiers résiduels
+def clean_startup():
+    from pathlib import Path
+    import shutil
+
+    app_dir = Path(__file__).resolve().parent
+    clients_dir = app_dir / "data" / "Dossier_clients"
+
+    # Nettoyage dossier clients
+    if clients_dir.exists():
+        for item in clients_dir.iterdir():
+            try:
+                if item.is_file():
+                    item.unlink()
+                elif item.is_dir():
+                    shutil.rmtree(item)
+            except Exception as e:
+                print(f"Erreur nettoyage: {e}")
+
+clean_startup()
+
 st.set_page_config(page_title="Ground Water Finder - Outils combinés", layout="wide")
 
 # Imports pour l'onglet 5 (upload)
