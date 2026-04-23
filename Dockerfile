@@ -60,6 +60,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /tmp/*
 
 # -----------------------------------------------------
+# Installer le client Docker (pour l'orchestrateur)
+# -----------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends docker.io \
+    && rm -rf /var/lib/apt/lists/*
+
+# -----------------------------------------------------
 # Copier Python depuis builder
 # -----------------------------------------------------
 COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
@@ -96,7 +102,7 @@ COPY . .
 RUN mkdir -p /workspace && chmod 777 /workspace
 
 # -----------------------------------------------------
-# Utilisateur non-root
+# Créer l'utilisateur non-root
 # -----------------------------------------------------
 RUN groupadd -r appuser && useradd -r -m -g appuser appuser \
     && mkdir -p /home/appuser/.streamlit /home/appuser/.config/matplotlib \
@@ -105,21 +111,25 @@ RUN groupadd -r appuser && useradd -r -m -g appuser appuser \
     && chown -R appuser:appuser /app /home/appuser
 
 # -----------------------------------------------------
-# Créer le dossier temporaire pour les cartes (MAINTENANT appuser EXISTE)
+# Ajouter appuser au groupe docker (après création de l'utilisateur)
+# -----------------------------------------------------
+
+# Le groupe docker existe déjà après l'installation de docker.io
+RUN usermod -aG docker appuser
+
+# -----------------------------------------------------
+# Créer le dossier temporaire pour les cartes
 # -----------------------------------------------------
 RUN mkdir -p /home/appuser/temp_cartes && \
     chown -R appuser:appuser /home/appuser/temp_cartes
 
-USER appuser
+# -----------------------------------------------------
+# Passer à l'utilisateur non-root
+# -----------------------------------------------------
+# USER appuser
 
 WORKDIR /workspace
 
-# 🔴 COMMENTÉ – éviter les problèmes de permissions
-# VOLUME ["/workspace"]
-
 EXPOSE 10000
 
-# -----------------------------------------------------
-# Lancement
-# -----------------------------------------------------
 CMD ["streamlit", "run", "/app/app.py", "--server.port=10000", "--server.address=0.0.0.0", "--server.headless=true", "--browser.gatherUsageStats=false"]

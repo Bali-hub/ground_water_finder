@@ -39,7 +39,7 @@ DOWNLOAD_SUFFIX = "_e"
 MIN_FILE_SIZE = 1000
 TIMEOUT = 30
 NAV_TIMEOUT = 180_000
-BATCH_SIZE = 2        # nombre de fichiers par batch
+BATCH_SIZE = 4        # nombre de fichiers par batch
 MAX_RETRIES = 3
 
 # =====================================================
