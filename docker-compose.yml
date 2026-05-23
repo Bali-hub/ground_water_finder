@@ -29,6 +29,7 @@ services:
       - STREAMLIT_SERVER_ADDRESS=0.0.0.0
       - STREAMLIT_SERVER_ENABLE_STATIC_FILE_HANDLING=true
       - STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=false
+      - TMPDIR=/dev/shm
 
       # --- Python / Matplotlib ---
       - PYTHONUNBUFFERED=1

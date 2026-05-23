@@ -93,13 +93,29 @@ with tab1:
     utils_setup.create_streamlit_app()
 
 with tab2:
+    st.title("🛰️ Scan satellites")
+
     app_dir = Path(__file__).resolve().parent
     clients_dir = app_dir / "data" / "Dossier_clients"
+
     if not clients_dir.exists() or not any(clients_dir.iterdir()):
-        st.error("❌ Aucun dossier client trouvé. Veuillez d'abord exécuter l'onglet **Configuration**.")
+        st.error("❌ Aucun dossier client trouvé. Veuillez d'abord exécuter l'onglet Configuration.")
     else:
-        from utils import utils_browser
-        utils_browser.run_streamlit_app()
+        st.info("Cliquez sur le bouton pour lancer le scan satellite.")
+
+        if st.button("🚀 Lancer le scan satellite"):
+            try:
+                from utils import utils_browser
+
+                with st.spinner("Scan satellite en cours..."):
+                    utils_browser.run_streamlit_app()
+
+                st.success("✅ Scan terminé.")
+
+            except Exception as e:
+                import traceback
+                st.error(f"Erreur : {e}")
+                st.code(traceback.format_exc())
 
 with tab3:
     app_dir = Path(__file__).resolve().parent
